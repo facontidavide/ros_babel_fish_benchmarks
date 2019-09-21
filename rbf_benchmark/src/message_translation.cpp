@@ -6,12 +6,32 @@
 
 #include <ros_babel_fish/babel_fish.h>
 #include <ros_type_introspection/ros_introspection.hpp>
-#include <topic_tools/shape_shifter.h>
+#include <ros_type_introspection/utils/shape_shifter.hpp>
 
 #include <geometry_msgs/Pose.h>
 #include <sensor_msgs/Image.h>
+#include <sensor_msgs/JointState.h>
 #include <sensor_msgs/PointCloud2.h>
 
+#define ENABLE_RTI 1
+
+void fillMessage( geometry_msgs::Pose& )
+{
+  // static size, doesn't matter
+}
+
+void fillMessage( sensor_msgs::JointState& joint )
+{
+  joint.header.frame_id = "base";
+  joint.name.push_back("Joint1");
+  joint.name.push_back("Joint2");
+  joint.name.push_back("Joint3");
+  joint.velocity.resize(3,0);
+  joint.effort.resize(3,0);
+  joint.position.push_back(0);
+  joint.position.push_back(1);
+  joint.position.push_back(2);
+}
 
 void fillMessage( sensor_msgs::PointCloud2 &pointcloud )
 {
@@ -41,9 +61,9 @@ namespace mt = ros::message_traits;
 
 #if ENABLE_RTI
 
-static void RTI_ParseMessageDefinitionPose( benchmark::State &state )
+template <typename MsgType>
+void RTI_ParseMessageDefinition( benchmark::State &state )
 {
-  using MsgType = geometry_msgs::Pose;
   const std::string &datatype = mt::DataType<MsgType>::value();
   const std::string &definition = mt::Definition<MsgType>::value();
   const std::string &md5 = mt::MD5Sum<MsgType>::value();
@@ -57,12 +77,17 @@ static void RTI_ParseMessageDefinitionPose( benchmark::State &state )
   }
 }
 
+static void RTI_ParseMessageDefinitionPose( benchmark::State &state )
+{
+  RTI_ParseMessageDefinition<geometry_msgs::Pose>(state);
+}
+
 BENCHMARK( RTI_ParseMessageDefinitionPose )->Unit( benchmark::kMicrosecond );
 #endif
 
-static void RBF_ParseMessageDefinitionPose( benchmark::State &state )
+template <typename MsgType>
+void RBF_ParseMessageDefinition( benchmark::State &state )
 {
-  using MsgType = geometry_msgs::Pose;
   const std::string &datatype = mt::DataType<MsgType>::value();
   const std::string &definition = mt::Definition<MsgType>::value();
   const std::string &md5 = mt::MD5Sum<MsgType>::value();
@@ -78,13 +103,18 @@ static void RBF_ParseMessageDefinitionPose( benchmark::State &state )
   }
 }
 
-BENCHMARK( RBF_ParseMessageDefinitionPose )->Unit( benchmark::kMicrosecond );
+static void RBF_ParseMessageDefinitionPose(benchmark::State &state)
+{
+  RBF_ParseMessageDefinition<geometry_msgs::Pose>(state);
+}
+
+BENCHMARK(RBF_ParseMessageDefinitionPose)->Unit(benchmark::kMicrosecond);
 
 #if ENABLE_RTI
 
-static void RTI_ParseMessagePose( benchmark::State &state )
+template <typename MsgType>
+void RTI_ParseMessage( benchmark::State &state )
 {
-  using MsgType = geometry_msgs::Pose;
   const std::string &datatype = mt::DataType<MsgType>::value();
   const std::string &definition = mt::Definition<MsgType>::value();
   const std::string &md5 = mt::MD5Sum<MsgType>::value();
@@ -92,37 +122,42 @@ static void RTI_ParseMessagePose( benchmark::State &state )
   parser.registerMessageDefinition( datatype, RosIntrospection::ROSType( datatype ), definition );
   RosIntrospection::FlatMessage flat_container;
   RosIntrospection::RenamedValues renamed_value;
-  std::vector<uint8_t> buffer;
 
-  geometry_msgs::Pose msg;
+  MsgType msg;
+  fillMessage(msg);
+
   ros::SerializedMessage serialized_msg = ros::serialization::serializeMessage( msg );
-  topic_tools::ShapeShifter shape_shifter;
-  shape_shifter.morph( md5, datatype, definition, "0" );
+  RosIntrospection::ShapeShifter shape_shifter;
+  shape_shifter.morph( md5, datatype, definition );
   ros::serialization::deserializeMessage( serialized_msg, shape_shifter );
 
   for ( auto _ : state )
   {
-    buffer.resize( shape_shifter.size());
-    ros::serialization::OStream stream( buffer.data(), buffer.size());
-    shape_shifter.write( stream );
-
-    parser.deserializeIntoFlatContainer( datatype, absl::Span<uint8_t>( buffer ), &flat_container, 10 );
+    auto buffer = absl::Span<uint8_t>( (uint8_t*)shape_shifter.raw_data(), shape_shifter.size() );
+    parser.deserializeIntoFlatContainer( datatype, buffer, &flat_container, 10 );
     parser.applyNameTransform( datatype, flat_container, &renamed_value );
   }
+}
+
+static void RTI_ParseMessagePose( benchmark::State &state )
+{
+  RTI_ParseMessage<geometry_msgs::Pose>(state);
 }
 
 BENCHMARK( RTI_ParseMessagePose );
 #endif
 
-static void RBF_ParseMessagePose( benchmark::State &state )
+template <typename MsgType>
+static void RBF_ParseMessage( benchmark::State &state )
 {
-  using MsgType = geometry_msgs::Pose;
   const std::string &datatype = mt::DataType<MsgType>::value();
   const std::string &definition = mt::Definition<MsgType>::value();
   const std::string &md5 = mt::MD5Sum<MsgType>::value();
   ros_babel_fish::BabelFish fish;
 
-  geometry_msgs::Pose msg;
+  MsgType msg;
+  fillMessage(msg);
+
   ros::SerializedMessage serialized_msg = ros::serialization::serializeMessage( msg );
   ros_babel_fish::BabelFishMessage bf_msg;
   bf_msg.morph( md5, datatype, definition );
@@ -133,6 +168,11 @@ static void RBF_ParseMessagePose( benchmark::State &state )
   {
     ros_babel_fish::Message::Ptr translated = fish.translateMessage( bf_msg );
   }
+}
+
+static void RBF_ParseMessagePose( benchmark::State &state )
+{
+  RBF_ParseMessage<geometry_msgs::Pose>(state);
 }
 
 BENCHMARK( RBF_ParseMessagePose );
@@ -141,32 +181,7 @@ BENCHMARK( RBF_ParseMessagePose );
 
 static void RTI_ParseMessagePointcloud( benchmark::State &state )
 {
-  using MsgType = sensor_msgs::PointCloud2;
-  const std::string &datatype = mt::DataType<MsgType>::value();
-  const std::string &definition = mt::Definition<MsgType>::value();
-  const std::string &md5 = mt::MD5Sum<MsgType>::value();
-  RosIntrospection::Parser parser;
-  parser.registerMessageDefinition( datatype, RosIntrospection::ROSType( datatype ), definition );
-  RosIntrospection::FlatMessage flat_container;
-  RosIntrospection::RenamedValues renamed_value;
-  std::vector<uint8_t> buffer;
-
-  MsgType msg;
-  fillMessage( msg );
-  ros::SerializedMessage serialized_msg = ros::serialization::serializeMessage( msg );
-  topic_tools::ShapeShifter shape_shifter;
-  shape_shifter.morph( md5, datatype, definition, "0" );
-  ros::serialization::deserializeMessage( serialized_msg, shape_shifter );
-
-  for ( auto _ : state )
-  {
-    buffer.resize( shape_shifter.size());
-    ros::serialization::OStream stream( buffer.data(), buffer.size());
-    shape_shifter.write( stream );
-
-    parser.deserializeIntoFlatContainer( datatype, absl::Span<uint8_t>( buffer ), &flat_container, 10 );
-    parser.applyNameTransform( datatype, flat_container, &renamed_value );
-  }
+  RTI_ParseMessage<sensor_msgs::PointCloud2>(state);
 }
 
 BENCHMARK( RTI_ParseMessagePointcloud );
@@ -174,24 +189,7 @@ BENCHMARK( RTI_ParseMessagePointcloud );
 
 static void RBF_ParseMessagePointcloud( benchmark::State &state )
 {
-  using MsgType = sensor_msgs::PointCloud2;
-  const std::string &datatype = mt::DataType<MsgType>::value();
-  const std::string &definition = mt::Definition<MsgType>::value();
-  const std::string &md5 = mt::MD5Sum<MsgType>::value();
-  ros_babel_fish::BabelFish fish;
-
-  MsgType msg;
-  fillMessage( msg );
-  ros::SerializedMessage serialized_msg = ros::serialization::serializeMessage( msg );
-  ros_babel_fish::BabelFishMessage bf_msg;
-  bf_msg.morph( md5, datatype, definition );
-  fish.descriptionProvider()->getMessageDescription( bf_msg );
-  ros::serialization::deserializeMessage( serialized_msg, bf_msg );
-
-  for ( auto _ : state )
-  {
-    ros_babel_fish::Message::Ptr translated = fish.translateMessage( bf_msg );
-  }
+  RBF_ParseMessage<sensor_msgs::PointCloud2>(state);
 }
 
 BENCHMARK( RBF_ParseMessagePointcloud );
@@ -200,32 +198,7 @@ BENCHMARK( RBF_ParseMessagePointcloud );
 
 static void RTI_ParseMessageFullHDImage( benchmark::State &state )
 {
-  using MsgType = sensor_msgs::Image;
-  const std::string &datatype = mt::DataType<MsgType>::value();
-  const std::string &definition = mt::Definition<MsgType>::value();
-  const std::string &md5 = mt::MD5Sum<MsgType>::value();
-  RosIntrospection::Parser parser;
-  parser.registerMessageDefinition( datatype, RosIntrospection::ROSType( datatype ), definition );
-  RosIntrospection::FlatMessage flat_container;
-  RosIntrospection::RenamedValues renamed_value;
-  std::vector<uint8_t> buffer;
-
-  MsgType msg;
-  fillMessage( msg );
-  ros::SerializedMessage serialized_msg = ros::serialization::serializeMessage( msg );
-  topic_tools::ShapeShifter shape_shifter;
-  shape_shifter.morph( md5, datatype, definition, "0" );
-  ros::serialization::deserializeMessage( serialized_msg, shape_shifter );
-
-  for ( auto _ : state )
-  {
-    buffer.resize( shape_shifter.size());
-    ros::serialization::OStream stream( buffer.data(), buffer.size());
-    shape_shifter.write( stream );
-
-    parser.deserializeIntoFlatContainer( datatype, absl::Span<uint8_t>( buffer ), &flat_container, 10 );
-    parser.applyNameTransform( datatype, flat_container, &renamed_value );
-  }
+  RTI_ParseMessage<sensor_msgs::Image>(state);
 }
 
 BENCHMARK( RTI_ParseMessageFullHDImage );
@@ -233,27 +206,26 @@ BENCHMARK( RTI_ParseMessageFullHDImage );
 
 static void RBF_ParseMessageFullHDImage( benchmark::State &state )
 {
-  using MsgType = sensor_msgs::Image;
-  const std::string &datatype = mt::DataType<MsgType>::value();
-  const std::string &definition = mt::Definition<MsgType>::value();
-  const std::string &md5 = mt::MD5Sum<MsgType>::value();
-  ros_babel_fish::BabelFish fish;
-
-  MsgType msg;
-  fillMessage( msg );
-  ros::SerializedMessage serialized_msg = ros::serialization::serializeMessage( msg );
-  ros_babel_fish::BabelFishMessage bf_msg;
-  bf_msg.morph( md5, datatype, definition );
-  fish.descriptionProvider()->getMessageDescription( bf_msg );
-  ros::serialization::deserializeMessage( serialized_msg, bf_msg );
-
-  for ( auto _ : state )
-  {
-    ros_babel_fish::Message::Ptr translated = fish.translateMessage( bf_msg );
-  }
+  RBF_ParseMessage<sensor_msgs::Image>(state);
 }
 
 BENCHMARK( RBF_ParseMessageFullHDImage );
 
+#if ENABLE_RTI
+
+static void RTI_ParseMessageJointState( benchmark::State &state )
+{
+  RTI_ParseMessage<sensor_msgs::JointState>(state);
+}
+
+BENCHMARK( RTI_ParseMessageJointState );
+#endif
+
+static void RBF_ParseMessageJointState( benchmark::State &state )
+{
+  RBF_ParseMessage<sensor_msgs::JointState>(state);
+}
+
+BENCHMARK( RBF_ParseMessageJointState );
 
 BENCHMARK_MAIN();
