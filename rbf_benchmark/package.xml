@@ -52,6 +52,9 @@
 
   <depend>geometry_msgs</depend>
   <depend>ros_babel_fish</depend>
+  <depend>ros_type_introspection</depend>
+  <depend>nav_msgs</depend>
+  <depend>tf</depend>
 
   <!-- The export tag contains other, unspecified, tags -->
   <export>
