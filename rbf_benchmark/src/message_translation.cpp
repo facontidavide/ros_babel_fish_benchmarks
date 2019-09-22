@@ -131,6 +131,8 @@ void RTI_ParseMessage( benchmark::State &state )
   shape_shifter.morph( md5, datatype, definition );
   ros::serialization::deserializeMessage( serialized_msg, shape_shifter );
 
+  parser.setBlobPolicy( RosIntrospection::Parser::STORE_BLOB_AS_REFERENCE );
+
   for ( auto _ : state )
   {
     auto buffer = absl::Span<uint8_t>( (uint8_t*)shape_shifter.raw_data(), shape_shifter.size() );
@@ -266,4 +268,49 @@ static void RBF_ParseMessageFullHDImage( benchmark::State &state )
 BENCHMARK( RBF_ParseMessageFullHDImage );
 
 //------------------------------------------
+
+template <typename MsgType, typename SubMsgType> inline
+    void RTI_ParseSubMessage( benchmark::State &state )
+{
+  const std::string &message_type = mt::DataType<MsgType>::value();
+  const std::string& submessage_type = mt::DataType<SubMsgType>::value();
+
+  const std::string& definition = mt::Definition<MsgType>::value();
+  const std::string &md5 = mt::MD5Sum<MsgType>::value();
+
+  RosIntrospection::Parser parser;
+  parser.registerMessageDefinition( message_type, RosIntrospection::ROSType( message_type ), definition);
+
+  parser.registerMessageDefinition( submessage_type, RosIntrospection::ROSType( submessage_type ),
+                                    mt::Definition<SubMsgType>::value() );
+
+  RosIntrospection::FlatMessage flat_container;
+  RosIntrospection::RenamedValues renamed_value;
+
+  MsgType msg;
+  fillMessage(msg);
+
+  ros::SerializedMessage serialized_msg = ros::serialization::serializeMessage( msg );
+  RosIntrospection::ShapeShifter shape_shifter;
+  shape_shifter.morph( md5, message_type, definition );
+  ros::serialization::deserializeMessage( serialized_msg, shape_shifter );
+
+  parser.setBlobPolicy( RosIntrospection::Parser::STORE_BLOB_AS_REFERENCE );
+
+  for ( auto _ : state )
+  {
+    auto buffer = absl::Span<uint8_t>( (uint8_t*)shape_shifter.raw_data(), shape_shifter.size() );
+    auto sub_buffer = parser.findSubField(message_type, RosIntrospection::ROSType(submessage_type), buffer);
+
+    parser.deserializeIntoFlatContainer( submessage_type, sub_buffer, &flat_container, 10 );
+    parser.applyNameTransform( submessage_type, flat_container, &renamed_value );
+  }
+}
+
+static void RBF_ParseSubMessagePoseFromOdom( benchmark::State &state )
+{
+  RTI_ParseSubMessage<nav_msgs::Odometry, geometry_msgs::Pose>(state);
+}
+BENCHMARK( RBF_ParseSubMessagePoseFromOdom );
+
 BENCHMARK_MAIN();
