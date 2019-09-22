@@ -307,10 +307,10 @@ template <typename MsgType, typename SubMsgType> inline
   }
 }
 
-static void RBF_ParseSubMessagePoseFromOdom( benchmark::State &state )
+static void RTI_ParseSubMessagePoseFromOdom( benchmark::State &state )
 {
   RTI_ParseSubMessage<nav_msgs::Odometry, geometry_msgs::Pose>(state);
 }
-BENCHMARK( RBF_ParseSubMessagePoseFromOdom );
+BENCHMARK( RTI_ParseSubMessagePoseFromOdom );
 
 BENCHMARK_MAIN();
